@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Wed, 11 Nov 2026 17:06:32 +0100
+Subject: [PATCH] SkyHand: Skip pulling into a full hopper minecart
+
+
+diff --git a/net/minecraft/world/entity/vehicle/minecart/MinecartHopper.java b/net/minecraft/world/entity/vehicle/minecart/MinecartHopper.java
+index 445c5cafad71028171c1f261939661775dd7f2bd..f0b13ada151911ec02e548a97a027cc96cfd9511 100644
+--- a/net/minecraft/world/entity/vehicle/minecart/MinecartHopper.java
++++ b/net/minecraft/world/entity/vehicle/minecart/MinecartHopper.java
+@@ -103,6 +103,7 @@ public class MinecartHopper extends AbstractMinecartContainer implements Hopper
+     }
+ 
+     public boolean suckInItems() {
++        if (this.isInventoryFull()) return false; // SkyHand - Skip pulling into a full hopper minecart
+         if (HopperBlockEntity.suckInItems(this.level(), this)) {
+             this.immunize(); // Paper
+             return true;
+@@ -119,6 +120,18 @@ public class MinecartHopper extends AbstractMinecartContainer implements Hopper
+         return false;
+     }
+ 
++    // SkyHand start - Skip pulling into a full hopper minecart
++    // Same rule as HopperBlockEntity#tryMoveItems: nothing can be inserted, so no pull attempt, no InventoryMoveItemEvent per source slot every tick
++    private boolean isInventoryFull() {
++        for (ItemStack stack : this.getItemStacks()) {
++            if (stack.isEmpty() || stack.getCount() < stack.getMaxStackSize()) {
++                return false;
++            }
++        }
++        return true;
++    }
++    // SkyHand end - Skip pulling into a full hopper minecart
++
+     @Override
+     public Item getDropItem() {
+         return Items.HOPPER_MINECART;
