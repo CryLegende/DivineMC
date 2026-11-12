@@ -1,0 +1,197 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Thu, 12 Nov 2026 02:26:15 +0100
+Subject: [PATCH] SkyHand: Thread-safe hopper event flags
+
+Paper keeps the hopper move-event shortcuts (skipPullModeEventFire,
+skipPushModeEventFire) and BlockEntity.ignoreBlockEntityUpdates in static
+fields. With Regionized Chunk Ticking hopper minecarts tick on several
+region threads at once, and with parallel world ticking every world has
+its own thread: a move on one thread could flip the flag for another one,
+which then moved items without firing InventoryMoveItemEvent (plugins such
+as AdvancedChests never saw it) or skipped an unrelated setChanged.
+
+The skip flags are now per thread. ignoreBlockEntityUpdates is per thread
+too, behind a counter so setChanged stays on its fast path while no hopper
+move is running, and it is reset in a finally block.
+
+diff --git a/net/minecraft/world/level/block/entity/BlockEntity.java b/net/minecraft/world/level/block/entity/BlockEntity.java
+index 25523192f01a483ba662f14ea9e528cd6b0781c0..1c48fc361f3720c9a4665978cfd430be5809db6e 100644
+--- a/net/minecraft/world/level/block/entity/BlockEntity.java
++++ b/net/minecraft/world/level/block/entity/BlockEntity.java
+@@ -39,7 +39,28 @@ import org.jspecify.annotations.Nullable;
+ import org.slf4j.Logger;
+ 
+ public abstract class BlockEntity implements DebugValueSource, TypedInstance<BlockEntityType<?>>, net.caffeinemc.mods.lithium.common.block.entity.inventory_comparator_tracking.ComparatorTracker, net.caffeinemc.mods.lithium.common.block.entity.SetBlockStateHandlingBlockEntity, net.caffeinemc.mods.lithium.common.block.entity.SetChangedHandlingBlockEntity { // DivineMC - lithium: sleeping_block_entity
+-    static boolean ignoreBlockEntityUpdates; // Paper - Perf: Optimize Hoppers
++    // Paper - Perf: Optimize Hoppers
++    // SkyHand start - Thread-safe hopper event flags
++    // Per thread: a hopper move on one region/world thread must not swallow another thread's setChanged. The counter
++    // keeps setChanged on its fast path (no ThreadLocal lookup) while no hopper move is in progress anywhere.
++    private static final java.util.concurrent.atomic.AtomicInteger IGNORE_UPDATES_WINDOWS = new java.util.concurrent.atomic.AtomicInteger();
++    private static final ThreadLocal<boolean[]> IGNORE_UPDATES_HERE = ThreadLocal.withInitial(() -> new boolean[1]);
++
++    static void ignoreBlockEntityUpdates(final boolean ignore) {
++        final boolean[] here = IGNORE_UPDATES_HERE.get();
++        if (here[0] == ignore) return;
++        here[0] = ignore;
++        if (ignore) {
++            IGNORE_UPDATES_WINDOWS.incrementAndGet();
++        } else {
++            IGNORE_UPDATES_WINDOWS.decrementAndGet();
++        }
++    }
++
++    private static boolean ignoreBlockEntityUpdates() {
++        return IGNORE_UPDATES_WINDOWS.get() != 0 && IGNORE_UPDATES_HERE.get()[0];
++    }
++    // SkyHand end - Thread-safe hopper event flags
+     // CraftBukkit start - data containers
+     private static final org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry DATA_TYPE_REGISTRY = new org.bukkit.craftbukkit.persistence.CraftPersistentDataTypeRegistry();
+     public final org.bukkit.craftbukkit.persistence.CraftPersistentDataContainer persistentDataContainer;
+@@ -211,7 +232,7 @@ public abstract class BlockEntity implements DebugValueSource, TypedInstance<Blo
+ 
+     public void setChanged() {
+         if (this.level != null) {
+-            if (ignoreBlockEntityUpdates) return; // Paper - Perf: Optimize Hoppers
++            if (ignoreBlockEntityUpdates()) return; // Paper - Perf: Optimize Hoppers // SkyHand - Thread-safe hopper event flags
+             setChanged(this.level, this.worldPosition, this.blockState);
+             if (org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.sleepingBlockEntity) lithium$handleSetChanged(); // DivineMC - lithium: sleeping_block_entity
+         }
+diff --git a/net/minecraft/world/level/block/entity/HopperBlockEntity.java b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+index ed55184469907f0af35e960d67594c4bf9559255..ecbc018ddf80970cb4ac5fb1006ba18c56bce8b1 100644
+--- a/net/minecraft/world/level/block/entity/HopperBlockEntity.java
++++ b/net/minecraft/world/level/block/entity/HopperBlockEntity.java
+@@ -228,11 +228,20 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+     // Paper start - Perf: Optimize Hoppers
+     public static boolean skipHopperEvents;
+-    private static boolean skipPullModeEventFire;
+-    private static boolean skipPushModeEventFire;
++    // SkyHand start - Thread-safe hopper event flags
++    // Hopper minecarts tick on region threads (Regionized Chunk Ticking) and worlds tick in parallel (PWT). With
++    // static flags, a move on one thread could make another thread skip its InventoryMoveItemEvent, so plugins
++    // never saw that move (AdvancedChests filler items pulled out of its containers).
++    private static final class EventSkip {
++        private boolean pull;
++        private boolean push;
++    }
++    private static final ThreadLocal<EventSkip> EVENT_SKIP = ThreadLocal.withInitial(EventSkip::new);
++    // SkyHand end - Thread-safe hopper event flags
+ 
+     private static boolean hopperPush(final Level level, final Container destination, final Direction direction, final HopperBlockEntity hopper) {
+-        skipPushModeEventFire = skipHopperEvents;
++        final EventSkip skip = EVENT_SKIP.get(); // SkyHand - Thread-safe hopper event flags
++        skip.push = skipHopperEvents; // SkyHand - Thread-safe hopper event flags
+         final long disallowedSlots = callPrepareTransferEvent(level, hopper, destination, true); // Paper - Add PrepareHopperTransferEvent
+         boolean foundItem = false;
+         for (int i = 0; i < hopper.getContainerSize(); ++i) {
+@@ -249,7 +258,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+ 
+                 // We only need to fire the event once to give protection plugins a chance to cancel this event
+                 // Because nothing uses getItem, every event call should end up the same result.
+-                if (!skipPushModeEventFire) {
++                if (!skip.push) { // SkyHand - Thread-safe hopper event flags
+                     movedItem = callPushMoveEvent(destination, movedItem, hopper);
+                     if (movedItem == null) { // cancelled
+                         origItemStack.setCount(originalItemCount);
+@@ -284,7 +293,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         final int movedItemCount = Math.min(level.spigotConfig.hopperAmount, originalItemCount);
+         movedItem.setCount(movedItemCount);
+ 
+-        if (!skipPullModeEventFire) {
++        if (!EVENT_SKIP.get().pull) { // SkyHand - Thread-safe hopper event flags
+             movedItem = callPullMoveEvent(hopper, container, movedItem);
+             if (movedItem == null) { // cancelled
+                 origItemStack.setCount(originalItemCount);
+@@ -304,9 +313,14 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                 origItemStack.setCount(originalItemCount - movedItemCount + remainingItemCount);
+             }
+ 
+-            ignoreBlockEntityUpdates = true;
+-            container.setItem(i, origItemStack);
+-            ignoreBlockEntityUpdates = false;
++            // SkyHand start - Thread-safe hopper event flags
++            ignoreBlockEntityUpdates(true);
++            try {
++                container.setItem(i, origItemStack);
++            } finally {
++                ignoreBlockEntityUpdates(false);
++            }
++            // SkyHand end - Thread-safe hopper event flags
+             container.setChanged();
+             return true;
+         }
+@@ -336,7 +350,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         );
+         final boolean result = event.callEvent();
+         if (!event.calledGetItem && !event.calledSetItem) {
+-            skipPushModeEventFire = true;
++            EVENT_SKIP.get().push = true; // SkyHand - Thread-safe hopper event flags
+         }
+         if (!result) {
+             applyCooldown(hopper);
+@@ -359,7 +373,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         final io.papermc.paper.event.inventory.PaperInventoryMoveItemEvent event = new io.papermc.paper.event.inventory.PaperInventoryMoveItemEvent(sourceInventory, org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitMirror(itemstack), destination, false);
+         final boolean result = event.callEvent();
+         if (!event.calledGetItem && !event.calledSetItem) {
+-            skipPullModeEventFire = true;
++            EVENT_SKIP.get().pull = true; // SkyHand - Thread-safe hopper event flags
+         }
+         if (!result) {
+             applyCooldown(hopper);
+@@ -528,7 +542,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+         Container container = org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.sleepingBlockEntity ? getExtractInventory(level, hopper, blockPos, blockState) : getSourceContainer(level, hopper, blockPos, blockState); // DivineMC - lithium: sleeping_block_entity
+         if (container != null) {
+             Direction direction = Direction.DOWN;
+-            skipPullModeEventFire = skipHopperEvents; // Paper - Perf: Optimize Hoppers
++            EVENT_SKIP.get().pull = skipHopperEvents; // Paper - Perf: Optimize Hoppers // SkyHand - Thread-safe hopper event flags
+             // DivineMC start - lithium: sleeping_block_entity
+             if (org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.sleepingBlockEntity && !hasPrepareTransferListeners(level)) {
+                 Boolean res = lithiumExtract(level, hopper, container);
+@@ -642,9 +656,14 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                     itemStack = itemStack.split(container.getMaxStackSize());
+                 }
+                 // Spigot end
+-                ignoreBlockEntityUpdates = true; // Paper - Perf: Optimize Hoppers
+-                container.setItem(slot, itemStack);
+-                ignoreBlockEntityUpdates = false; // Paper - Perf: Optimize Hoppers
++                // SkyHand start - Thread-safe hopper event flags
++                ignoreBlockEntityUpdates(true); // Paper - Perf: Optimize Hoppers
++                try {
++                    container.setItem(slot, itemStack);
++                } finally {
++                    ignoreBlockEntityUpdates(false); // Paper - Perf: Optimize Hoppers
++                }
++                // SkyHand end - Thread-safe hopper event flags
+                 itemStack = leftover; // Paper - Make hoppers respect inventory max stack size
+                 success = true;
+             } else if (canMergeItems(current, itemStack)) {
+@@ -1497,7 +1516,8 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+                 hopperBlockEntity.insertStackList.getOccupiedSlots() == 0 :
+                 insertInventory.isEmpty();
+ 
+-        skipPushModeEventFire = skipHopperEvents;
++        final EventSkip skip = EVENT_SKIP.get(); // SkyHand - Thread-safe hopper event flags
++        skip.push = skipHopperEvents; // SkyHand - Thread-safe hopper event flags
+         //noinspection ConstantConditions
+         if (!(hopperBlockEntity.insertInventory == insertInventory && hopperBlockEntity.insertStackList.getFullSlots() == hopperBlockEntity.insertStackList.size())) {
+             Direction fromDirection = hopperBlockEntity.facing.getOpposite();
+@@ -1505,7 +1525,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+             for (int i = 0; i < size; ++i) {
+                 ItemStack transferStack = hopperStackList.get(i);
+                 if (!transferStack.isEmpty()) {
+-                    if (!skipPushModeEventFire && canTakeItemFromContainer(insertInventory, hopperBlockEntity, transferStack, i, Direction.DOWN)) {
++                    if (!skip.push && canTakeItemFromContainer(insertInventory, hopperBlockEntity, transferStack, i, Direction.DOWN)) { // SkyHand - Thread-safe hopper event flags
+                         transferStack = callPushMoveEvent(insertInventory, transferStack, hopperBlockEntity);
+                         if (transferStack == null) { // cancelled
+                             break;
+@@ -1565,7 +1585,7 @@ public class HopperBlockEntity extends RandomizableContainerBlockEntity implemen
+             int fromSlot = availableSlots != null ? availableSlots[i] : i;
+             ItemStack itemStack = fromStackList.get(fromSlot);
+             if (!itemStack.isEmpty() && canTakeItemFromContainer(to, from, itemStack, fromSlot, Direction.DOWN)) {
+-                if (!skipPullModeEventFire) {
++                if (!EVENT_SKIP.get().pull) { // SkyHand - Thread-safe hopper event flags
+                     itemStack = callPullMoveEvent(to, from, itemStack);
+                     if (itemStack == null) { // cancelled
+                         return true;
