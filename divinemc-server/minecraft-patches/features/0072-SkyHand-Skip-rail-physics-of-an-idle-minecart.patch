@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Thu, 12 Nov 2026 03:22:47 +0100
+Subject: [PATCH] SkyHand: Skip rail physics of an idle minecart
+
+A minecart standing still on a rail redoes the same rail physics every
+tick (track snapping, collision, block and fluid checks) and ends where
+it started. Hopper minecart farms keep hundreds of them parked under
+item sources. Once a minecart rests, skip that part of its tick until
+something can move it: its velocity or position changed from outside,
+a passenger, damage, or a change of its rail block (removed, reshaped,
+powered or unpowered). A full tick still runs every recheck-interval
+ticks. Hopper pickup and other subclass ticks are untouched.
+
+diff --git a/net/minecraft/world/entity/vehicle/minecart/AbstractMinecart.java b/net/minecraft/world/entity/vehicle/minecart/AbstractMinecart.java
+index 39b018231a92a979fce3cb9d8f8a24e5d3722324..090f97b538efc105abf63e7cfdd7f66f5b75abf5 100644
+--- a/net/minecraft/world/entity/vehicle/minecart/AbstractMinecart.java
++++ b/net/minecraft/world/entity/vehicle/minecart/AbstractMinecart.java
+@@ -112,6 +112,14 @@ public abstract class AbstractMinecart extends VehicleEntity {
+     // Purpur end - Minecart settings and WASD controls
+     public net.kyori.adventure.util.TriState frictionState = net.kyori.adventure.util.TriState.NOT_SET; // Paper - Friction API
+     // CraftBukkit end
++    // SkyHand start - Skip rail physics of an idle minecart
++    private @Nullable BlockState idleRailState; // rail the minecart rests on, null while it is not idle
++    private @Nullable BlockPos idleRailPos;
++    private @Nullable Vec3 idleDeltaMovement;
++    private double idleX;
++    private double idleY;
++    private double idleZ;
++    // SkyHand end - Skip rail physics of an idle minecart
+ 
+     protected AbstractMinecart(final EntityType<?> type, final Level level) {
+         super(type, level);
+@@ -326,6 +334,14 @@ public abstract class AbstractMinecart extends VehicleEntity {
+         this.checkBelowWorld();
+         this.computeSpeed();
+         // this.handlePortal(); // CraftBukkit - handled in postTick
++        // SkyHand start - Skip rail physics of an idle minecart
++        if (this.isIdleOnRail()) {
++            this.behavior.pushAndPickupEntities(); // still push minecarts that run into it, as in vanilla
++            new org.bukkit.event.vehicle.VehicleUpdateEvent((org.bukkit.entity.Vehicle) this.getBukkitEntity()).callEvent();
++            this.firstTick = false;
++            return;
++        }
++        // SkyHand end - Skip rail physics of an idle minecart
+         this.behavior.tick();
+         // CraftBukkit start
+         org.bukkit.World bworld = this.level().getWorld();
+@@ -346,9 +362,75 @@ public abstract class AbstractMinecart extends VehicleEntity {
+             this.fallDistance *= 0.5;
+         }
+ 
++        this.rememberIdleOnRail(prevX, prevY, prevZ); // SkyHand - Skip rail physics of an idle minecart
+         this.firstTick = false;
+     }
+ 
++    // SkyHand start - Skip rail physics of an idle minecart
++    // A minecart standing still on a rail redoes the same rail physics every tick (track snapping, collision, block and
++    // fluid checks) and ends where it started. Once it rests, skip that until something can move it: its velocity or
++    // position is changed from outside (push, collision, plugin, piston, teleport), it gets a passenger or is hit, or
++    // its rail block changes (removed, reshaped, powered or unpowered, which also covers activator rails). A full tick
++    // still runs every recheck-interval ticks for changes nothing reports. Pushing other minecarts and subclass ticks
++    // (hopper pickup, TNT fuse) run as usual.
++    private boolean isIdleOnRail() {
++        final BlockState railState = this.idleRailState;
++        if (railState == null) {
++            return false;
++        }
++
++        if (!org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.idleMinecartEnabled
++            || this.getDeltaMovement() != this.idleDeltaMovement
++            || this.getX() != this.idleX || this.getY() != this.idleY || this.getZ() != this.idleZ
++            || this.isVehicle()
++            || this.getHurtTime() > 0
++            || (this.tickCount + this.getId()) % org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.idleMinecartRecheckInterval == 0
++            || this.level().getBlockState(this.idleRailPos) != railState) {
++            this.idleRailState = null;
++            return false;
++        }
++
++        return true;
++    }
++
++    private void rememberIdleOnRail(final double prevX, final double prevY, final double prevZ) {
++        if (!org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.idleMinecartEnabled
++            || this.isNewBehavior
++            || !this.onRails
++            || this.isVehicle()
++            || this.isFurnace()
++            || this.isRemoved()) {
++            return;
++        }
++
++        final Vec3 movement = this.getDeltaMovement();
++        final double dx = this.getX() - prevX;
++        final double dy = this.getY() - prevY;
++        final double dz = this.getZ() - prevZ;
++        if (movement.horizontalDistanceSqr() > 1.0E-8 || dx * dx + dy * dy + dz * dz > 1.0E-8) {
++            return;
++        }
++
++        final BlockPos railPos = this.getCurrentBlockPosOrRailBelow();
++        final BlockState railState = this.level().getBlockState(railPos);
++        if (!BaseRailBlock.isRail(railState)) {
++            return;
++        }
++
++        // A powered powered rail can kick a resting minecart when a block is placed next to it, a powered activator rail acts on it every tick
++        if ((railState.is(Blocks.POWERED_RAIL) || railState.is(Blocks.ACTIVATOR_RAIL)) && railState.getValue(PoweredRailBlock.POWERED)) {
++            return;
++        }
++
++        this.idleRailPos = railPos;
++        this.idleRailState = railState;
++        this.idleDeltaMovement = movement;
++        this.idleX = this.getX();
++        this.idleY = this.getY();
++        this.idleZ = this.getZ();
++    }
++    // SkyHand end - Skip rail physics of an idle minecart
++
+     public boolean isFirstTick() {
+         return this.firstTick;
+     }

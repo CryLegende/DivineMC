@@ -590,6 +590,8 @@ public class DivineConfig {
         public static boolean equipmentTracking = false;
         public static boolean hopperThrottleWhenFull = false;
         public static int hopperThrottleSkipTicks = 0;
+        public static boolean idleMinecartEnabled = true;
+        public static int idleMinecartRecheckInterval = 20;
 
         // DAB settings
         public static boolean dabEnabled = false;
@@ -727,6 +729,16 @@ public class DivineConfig {
                 "When enabled, hoppers will throttle if target container is full.");
             hopperThrottleSkipTicks = getInt(ConfigCategory.PERFORMANCE.key("optimizations.hopper-throttle-when-full.skip-ticks"), hopperThrottleSkipTicks,
                 "The amount of ticks to skip when the hopper is throttled.");
+
+            idleMinecartEnabled = getBoolean(ConfigCategory.PERFORMANCE.key("optimizations.idle-minecart.enabled"), idleMinecartEnabled,
+                "When enabled, a minecart resting on a rail without passenger skips its rail physics until it is pushed, moved,",
+                "ridden or hit, or its rail changes (removed, reshaped, powered or unpowered). Hopper minecarts keep picking up items.");
+            idleMinecartRecheckInterval = getInt(ConfigCategory.PERFORMANCE.key("optimizations.idle-minecart.recheck-interval"), idleMinecartRecheckInterval,
+                "An idle minecart still runs a full tick every this many ticks, for changes nothing reports (a block removed next to it).");
+            if (idleMinecartRecheckInterval < 1) {
+                LOGGER.warn("Invalid idle minecart recheck interval: {}, resetting to default (20)", idleMinecartRecheckInterval);
+                idleMinecartRecheckInterval = 20;
+            }
         }
 
         private static void dab() {
