@@ -1,0 +1,141 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 14 Nov 2026 15:06:32 +0100
+Subject: [PATCH] SkyHand: Skip block updates players cannot see
+
+Every block change is sent to each player who has the chunk loaded, and
+the client rebuilds the 16x16x16 mesh around it. Two kinds of change
+show nothing on screen:
+- a property that no model, block entity packet or client logic reads:
+  tripwire powered/disarmed (items falling through cactus farm string),
+  hopper enabled, dispenser/dropper triggered, note block powered, leaves
+  distance/persistent, beehive honey level below 5;
+- a cactus grown where it cannot stay (cactus farms): it breaks on the
+  next tick, and players still get that break (particles, sound, item).
+A grown cactus still standing at the next broadcast is sent then.
+Changes back to the same state on purpose (block entity data, plugins
+resending a block) are always sent. Config key
+performance.optimizations.hidden-block-updates.enabled.
+
+diff --git a/net/minecraft/server/level/ServerChunkCache.java b/net/minecraft/server/level/ServerChunkCache.java
+index 87daccfca8e46e9e719411b1ac4d9d886398dec7..4e71ca58af227014614b66d106ddc1e367ec9928 100644
+--- a/net/minecraft/server/level/ServerChunkCache.java
++++ b/net/minecraft/server/level/ServerChunkCache.java
+@@ -593,6 +593,7 @@ public class ServerChunkCache extends ChunkSource implements ca.spottedleaf.moon
+ 
+     private void broadcastChangedChunks(final ProfilerFiller profiler) {
+         profiler.push("broadcast");
++        if (org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.hiddenBlockUpdatesEnabled) this.level.flushHiddenCacti(); // SkyHand - Skip block updates players cannot see
+ 
+         // DivineMC start - Regionized Chunk Ticking
+         synchronized (chunkHoldersToBroadcast) {
+diff --git a/net/minecraft/server/level/ServerLevel.java b/net/minecraft/server/level/ServerLevel.java
+index 9b47fc8ce018749aa6f8b1316008f9d8f215bf0f..34ffec5c0c5aa6b0220f2494d6bd4919eca42c00 100644
+--- a/net/minecraft/server/level/ServerLevel.java
++++ b/net/minecraft/server/level/ServerLevel.java
+@@ -212,6 +212,11 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+     private final PathTypeCache pathTypesByPosCache = new PathTypeCache();
+     private final Set<Mob> navigatingMobs = java.util.concurrent.ConcurrentHashMap.newKeySet(); // DivineMC - Regionized Chunk Ticking
+     private final ThreadLocal<Boolean> isUpdatingNavigations = ThreadLocal.withInitial(() -> Boolean.FALSE); // DivineMC - Regionized Chunk Ticking
++    // SkyHand start - Skip block updates players cannot see
++    private List<BlockPos> hiddenCactiThisTick = new ArrayList<>(); // guarded by hiddenCactiLock
++    private List<BlockPos> hiddenCactiLastTick = new ArrayList<>(); // guarded by hiddenCactiLock
++    private final Object hiddenCactiLock = new Object();
++    // SkyHand end - Skip block updates players cannot see
+     protected final Raids raids;
+     private final ObjectLinkedOpenHashSet<BlockEventData> blockEvents = new ObjectLinkedOpenHashSet<>();
+     private final List<BlockEventData> blockEventsToReschedule = new ArrayList<>(64);
+@@ -2011,7 +2016,9 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+             Util.logAndPauseIfInIde("recursive call to sendBlockUpdated", new IllegalStateException("recursive call to sendBlockUpdated"));
+         }
+ 
++        if (!org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.hiddenBlockUpdatesEnabled || !this.hideBlockUpdate(pos, old, current)) { // SkyHand - Skip block updates players cannot see
+         this.getChunkSource().blockChanged(pos);
++        } // SkyHand - Skip block updates players cannot see
+         this.pathTypesByPosCache.invalidate(pos);
+         if (this.paperConfig().misc.updatePathfindingOnBlockUpdate) { // Paper - option to disable pathfinding updates
+         VoxelShape oldShape = old.getCollisionShape(this, pos);
+@@ -2041,6 +2048,83 @@ public class ServerLevel extends Level implements WorldGenLevel, ServerEntityGet
+         } // Paper - option to disable pathfinding updates
+     }
+ 
++    // SkyHand start - Skip block updates players cannot see
++    /**
++     * Whether a block change is kept from the players: the block looks exactly the same before and after, or it is a
++     * cactus grown where it cannot stay (a cactus farm), which breaks on the next tick. Every such change still marks
++     * the chunk unsaved and runs its game logic; only the client update is skipped. A client that receives a useless
++     * update rebuilds the 16x16x16 mesh around it, which is what costs frames next to big farms.
++     */
++    private boolean hideBlockUpdate(final BlockPos pos, final BlockState old, final BlockState current) {
++        if (old == current) {
++            return false; // a resend on purpose (block entity data, a plugin correcting a client): always sent
++        }
++        final Block block = current.getBlock();
++        if (block != old.getBlock()) {
++            // The grown cactus breaks one tick later (level event 2001: particles, sound, item), which players get
++            // as usual. If it is still there at the next broadcast, flushHiddenCacti sends it then.
++            if (block == Blocks.CACTUS && old.isAir() && !current.canSurvive(this, pos)) {
++                synchronized (this.hiddenCactiLock) {
++                    this.hiddenCactiThisTick.add(pos.immutable());
++                }
++                return true;
++            }
++            return false;
++        }
++        // Properties no block model, block entity packet or client logic reads (checked against the 26.3 blockstates)
++        if (block == Blocks.TRIPWIRE) {
++            return sameExcept(old, current, net.minecraft.world.level.block.TripWireBlock.POWERED, net.minecraft.world.level.block.TripWireBlock.DISARMED);
++        }
++        if (block == Blocks.HOPPER) {
++            return sameExcept(old, current, net.minecraft.world.level.block.HopperBlock.ENABLED, null);
++        }
++        if (block == Blocks.DISPENSER || block == Blocks.DROPPER) {
++            return sameExcept(old, current, net.minecraft.world.level.block.DispenserBlock.TRIGGERED, null);
++        }
++        if (block == Blocks.NOTE_BLOCK) {
++            return sameExcept(old, current, net.minecraft.world.level.block.NoteBlock.POWERED, null);
++        }
++        if (block instanceof net.minecraft.world.level.block.LeavesBlock) {
++            return sameExcept(old, current, net.minecraft.world.level.block.LeavesBlock.DISTANCE, net.minecraft.world.level.block.LeavesBlock.PERSISTENT);
++        }
++        if (block == Blocks.BEEHIVE || block == Blocks.BEE_NEST) {
++            // honey levels 0 to 4 share one model, honey drips only at 5
++            return old.getValue(net.minecraft.world.level.block.BeehiveBlock.HONEY_LEVEL) < net.minecraft.world.level.block.BeehiveBlock.MAX_HONEY_LEVELS
++                && current.getValue(net.minecraft.world.level.block.BeehiveBlock.HONEY_LEVEL) < net.minecraft.world.level.block.BeehiveBlock.MAX_HONEY_LEVELS
++                && sameExcept(old, current, net.minecraft.world.level.block.BeehiveBlock.HONEY_LEVEL, null);
++        }
++        return false;
++    }
++
++    private static boolean sameExcept(final BlockState a, final BlockState b, final net.minecraft.world.level.block.state.properties.Property<?> ignored, final net.minecraft.world.level.block.state.properties.Property<?> alsoIgnored) {
++        for (net.minecraft.world.level.block.state.properties.Property<?> property : a.getProperties()) {
++            if (property != ignored && property != alsoIgnored && !a.getValue(property).equals(b.getValue(property))) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    /** Called before each broadcast: a cactus hidden at the previous broadcast that did not break is sent now. */
++    public void flushHiddenCacti() {
++        final List<BlockPos> toCheck;
++        synchronized (this.hiddenCactiLock) {
++            if (this.hiddenCactiThisTick.isEmpty() && this.hiddenCactiLastTick.isEmpty()) {
++                return;
++            }
++            toCheck = this.hiddenCactiLastTick;
++            this.hiddenCactiLastTick = this.hiddenCactiThisTick;
++            this.hiddenCactiThisTick = new ArrayList<>();
++        }
++        for (final BlockPos pos : toCheck) {
++            final BlockState state = this.getBlockStateIfLoaded(pos);
++            if (state != null && state.is(Blocks.CACTUS)) {
++                this.getChunkSource().blockChanged(pos);
++            }
++        }
++    }
++    // SkyHand end - Skip block updates players cannot see
++
+     @Override
+     public void updateNeighborsAt(final BlockPos pos, final Block sourceBlock) {
+         // CraftBukkit start

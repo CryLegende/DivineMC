@@ -592,6 +592,7 @@ public class DivineConfig {
         public static int hopperThrottleSkipTicks = 0;
         public static boolean idleMinecartEnabled = true;
         public static int idleMinecartRecheckInterval = 20;
+        public static boolean hiddenBlockUpdatesEnabled = true;
 
         // DAB settings
         public static boolean dabEnabled = false;
@@ -739,6 +740,11 @@ public class DivineConfig {
                 LOGGER.warn("Invalid idle minecart recheck interval: {}, resetting to default (20)", idleMinecartRecheckInterval);
                 idleMinecartRecheckInterval = 20;
             }
+
+            hiddenBlockUpdatesEnabled = getBoolean(ConfigCategory.PERFORMANCE.key("optimizations.hidden-block-updates.enabled"), hiddenBlockUpdatesEnabled,
+                "When enabled, block changes that look the same on screen are not sent to players (tripwire powered or disarmed,",
+                "hopper enabled, dispenser and dropper triggered, note block powered, leaves distance, beehive honey below 5),",
+                "nor a cactus grown where it breaks on the next tick (cactus farms): players still get its break and item.");
         }
 
         private static void dab() {
