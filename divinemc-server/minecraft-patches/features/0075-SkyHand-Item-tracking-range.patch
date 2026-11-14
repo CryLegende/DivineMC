@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 14 Nov 2026 19:00:43 +0100
+Subject: [PATCH] SkyHand: Item tracking range
+
+
+diff --git a/net/minecraft/server/level/ChunkMap.java b/net/minecraft/server/level/ChunkMap.java
+index e482645097fdbd6b0994b839cd0d5b56cd5e12e6..5af91b93c1f35b8e2bd32715b1ce1913581497f3 100644
+--- a/net/minecraft/server/level/ChunkMap.java
++++ b/net/minecraft/server/level/ChunkMap.java
+@@ -1013,6 +1013,11 @@ public class ChunkMap extends SimpleRegionStorage implements ChunkHolder.PlayerP
+             EntityType<?> type = entity.getType();
+             int range = type.clientTrackingRange() * 16;
+             range = org.spigotmc.TrackingRange.getEntityTrackingRange(entity, range); // Spigot
++            // SkyHand start - Item tracking range
++            if (range != 0 && entity instanceof net.minecraft.world.entity.item.ItemEntity && org.bxteam.divinemc.config.DivineConfig.NetworkCategory.itemTrackingRange > 0) {
++                range = org.bxteam.divinemc.config.DivineConfig.NetworkCategory.itemTrackingRange;
++            }
++            // SkyHand end - Item tracking range
+             if (range != 0) {
+                 if (this.entityMap.containsKey(entity.getId())) {
+                     throw (IllegalStateException)Util.pauseInIde(new IllegalStateException("Entity is already tracked!"));

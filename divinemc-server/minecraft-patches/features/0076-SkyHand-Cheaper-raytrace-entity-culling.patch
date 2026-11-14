@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 14 Nov 2026 19:01:18 +0100
+Subject: [PATCH] SkyHand: Cheaper raytrace entity culling
+
+
+diff --git a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+index 1651698b79fd62b20c18a931849f8b4711d4d654..b4922fb0dafa04abbb33e7b0c886e75097d6e55a 100644
+--- a/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
++++ b/ca/spottedleaf/moonrise/patches/chunk_system/level/entity/ChunkEntitySlices.java
+@@ -200,6 +200,13 @@ public final class ChunkEntitySlices {
+         return this.entities.size() != 0;
+     }
+ 
++    // SkyHand start - Cheaper raytrace entity culling
++    /** Entities of this chunk, for readers off the tick thread that tolerate a stale or partly null array. */
++    public EntityList skyhand$getEntityList() {
++        return this.entities;
++    }
++    // SkyHand end - Cheaper raytrace entity culling
++
+     public List<Entity> getAllEntities() {
+         final int len = this.entities.size();
+         if (len == 0) {
+diff --git a/net/minecraft/world/level/Level.java b/net/minecraft/world/level/Level.java
+index 58762aa23aa33070d58e1cd0564ee689f7450b78..6463b5d85f38295e2f540c8d3049b1b4c132c661 100644
+--- a/net/minecraft/world/level/Level.java
++++ b/net/minecraft/world/level/Level.java
+@@ -1162,7 +1162,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable, ca.spottedl
+         }
+         // DivineMC end - Imanity: Raytrace AntiXraySDK integration
+         this.chunkPacketBlockController.onBlockChange(this, pos, blockState, oldState, updateFlags, updateLimit); // Paper - Anti-Xray
+-        org.bxteam.divinemc.culling.EntityCullingManager.onBlockChange(this, pos); // DivineMC - Raytrace Entity Culling
++        org.bxteam.divinemc.culling.EntityCullingManager.onBlockChange(this, pos, oldState, blockState); // DivineMC - Raytrace Entity Culling // SkyHand - Cheaper raytrace entity culling
+         if (oldState == null) {
+             // CraftBukkit start - remove blockstate if failed (or the same)
+             if (captureBlockStates && captured) { // DivineMC - Regionized Chunk Ticking - thread-safe block capture

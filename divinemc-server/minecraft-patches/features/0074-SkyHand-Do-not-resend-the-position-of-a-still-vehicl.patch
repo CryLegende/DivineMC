@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 14 Nov 2026 19:00:28 +0100
+Subject: [PATCH] SkyHand: Do not resend the position of a still vehicle
+
+
+diff --git a/net/minecraft/server/level/ServerEntity.java b/net/minecraft/server/level/ServerEntity.java
+index 52d424f9aa1a5f09cd9427423b9fa1fabf69f542..940f81b6096fa3d60e4d893de28bc92a61d2c2de 100644
+--- a/net/minecraft/server/level/ServerEntity.java
++++ b/net/minecraft/server/level/ServerEntity.java
+@@ -111,7 +111,9 @@ public class ServerEntity {
+ 
+     public void sendChanges() {
+         // Paper start - optimise collisions
+-        if (((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this.entity).moonrise$isHardColliding()) {
++        final boolean hardColliding = ((ca.spottedleaf.moonrise.patches.chunk_system.entity.ChunkSystemEntity)this.entity).moonrise$isHardColliding(); // SkyHand - Do not resend the position of a still vehicle
++        final boolean stillVehicleSync = hardColliding && org.bxteam.divinemc.config.DivineConfig.PerformanceCategory.stillVehicleSyncEnabled; // SkyHand - Do not resend the position of a still vehicle
++        if (hardColliding && !stillVehicleSync) { // SkyHand - Do not resend the position of a still vehicle
+             this.teleportDelay = 9999;
+         }
+         // Paper end - optimise collisions
+@@ -206,6 +208,20 @@ public class ServerEntity {
+                     boolean positionChanged = (dx * dx + dy * dy + dz * dz) >= 7.62939453125E-6D;
+                     // Paper end - reduce allocation of Vec3 here
+                     boolean shouldSendPosition = positionChanged || this.tickCount % 60 == 0;
++                    // SkyHand start - Do not resend the position of a still vehicle
++                    // Hard colliding entities (boats, minecarts, shulkers) are always sent in full precision, so a client
++                    // that got the last packet already has their exact position: nothing to send while it stays the same.
++                    if (stillVehicleSync) {
++                        if (this.forceStateResync || this.wasRiding || shouldSendRotation || this.teleportDelay > 400
++                            || this.wasOnGround != this.entity.onGround() || this.entity.getRequiresPrecisePosition()
++                            || dx != 0.0D || dy != 0.0D || dz != 0.0D) {
++                            this.teleportDelay = 9999;
++                            packet = this.createMovePacket(position, yRotn, xRotn, true, shouldSendRotation);
++                        } else {
++                            packet = null;
++                        }
++                    } else
++                    // SkyHand end - Do not resend the position of a still vehicle
+                     packet = this.createMovePacket(position, yRotn, xRotn, shouldSendPosition, shouldSendRotation);
+                 }
+ 

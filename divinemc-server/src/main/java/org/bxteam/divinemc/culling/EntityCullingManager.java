@@ -4,10 +4,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.bxteam.divinemc.config.DivineConfig;
 import org.bxteam.divinemc.util.NamedAgnosticThreadFactory;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,10 +85,16 @@ public final class EntityCullingManager {
         }
     }
 
-    public static void onBlockChange(Level level, BlockPos pos) {
+    public static void onBlockChange(Level level, BlockPos pos, @Nullable BlockState oldState, BlockState newState) {
         if (!DivineConfig.NetworkCategory.raytraceCullingEnabled || TRACKERS.isEmpty()) {
             return;
         }
+        // SkyHand start - Cheaper raytrace entity culling
+        // Only a block that starts or stops hiding what is behind it changes visibility (farms change blocks all the time)
+        if (oldState == null || oldState.isSolidRender() == newState.isSolidRender()) {
+            return;
+        }
+        // SkyHand end - Cheaper raytrace entity culling
         final int traceDistance = DivineConfig.NetworkCategory.raytraceCullingMaxTraceDistance;
         for (final PlayerCullTracker tracker : TRACKERS) {
             tracker.notifyBlockChange(level, pos, traceDistance);

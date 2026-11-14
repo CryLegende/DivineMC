@@ -8,11 +8,17 @@ import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Leashable;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.LeashFenceKnotEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FishingHook;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.bxteam.divinemc.config.DivineConfig;
@@ -148,42 +154,62 @@ public final class PlayerCullTracker implements Runnable {
         IntOpenHashSet newCulled = null;
         int traceFailures = 0;
         Throwable lastTraceFailure = null;
-        for (final Entity entity : level.moonrise$getEntityLookup().getAllMapped()) {
-            if (entity == null || entity == this.player || this.isAlwaysVisible(entity)) {
-                continue;
-            }
-
-            final double distanceSqr = entity.distanceToSqr(eye.x, eye.y, eye.z);
-            if (distanceSqr < forceVisibleRadiusSqr || distanceSqr > traceDistanceSqr) {
-                continue;
-            }
-
-            final AABB box = entity.getBoundingBox();
-            if (box.getXsize() > boundingBoxLimit || box.getYsize() > boundingBoxLimit || box.getZsize() > boundingBoxLimit) {
-                continue;
-            }
-
-            final int id = entity.getId();
-            if (this.visibleUntil.get(id) > now) {
-                continue; // recently proven visible - pinned to avoid track/untrack flicker
-            }
-
-            try {
-                this.aabbMin.set(box.minX, box.minY, box.minZ);
-                this.aabbMax.set(box.maxX, box.maxY, box.maxZ);
-                if (this.culling.isAABBVisible(this.aabbMin, this.aabbMax, this.camera)) {
-                    this.visibleUntil.put(id, now + visibilityTimeoutMs);
-                } else {
-                    if (newCulled == null) {
-                        newCulled = new IntOpenHashSet();
-                    }
-                    newCulled.add(id);
+        // SkyHand start - Cheaper raytrace entity culling
+        // Only the chunks within the trace distance: walking every entity of the world for each player and each pass
+        // cost more than the raytraces themselves on a world with tens of thousands of entities.
+        final ca.spottedleaf.moonrise.patches.chunk_system.level.entity.EntityLookup lookup = level.moonrise$getEntityLookup();
+        final int minChunkX = Mth.floor(eye.x - traceDistance) >> 4;
+        final int maxChunkX = Mth.floor(eye.x + traceDistance) >> 4;
+        final int minChunkZ = Mth.floor(eye.z - traceDistance) >> 4;
+        final int maxChunkZ = Mth.floor(eye.z + traceDistance) >> 4;
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; ++chunkX) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; ++chunkZ) {
+                final ca.spottedleaf.moonrise.patches.chunk_system.level.entity.ChunkEntitySlices slices = lookup.getChunk(chunkX, chunkZ);
+                if (slices == null) {
+                    continue;
                 }
-            } catch (Throwable throwable) {
-                ++traceFailures; // entity stays visible
-                lastTraceFailure = throwable;
+                final ca.spottedleaf.moonrise.common.list.EntityList entities = slices.skyhand$getEntityList();
+                final Entity[] raw = entities.getRawData();
+                for (int i = 0, len = Math.min(raw.length, entities.size()); i < len; ++i) {
+                    final Entity entity = raw[i];
+                    if (entity == null || entity == this.player) {
+                        continue;
+                    }
+
+                    final double distanceSqr = entity.distanceToSqr(eye.x, eye.y, eye.z);
+                    if (distanceSqr < forceVisibleRadiusSqr || distanceSqr > traceDistanceSqr || this.isAlwaysVisible(entity)) {
+                        continue;
+                    }
+
+                    final AABB box = entity.getBoundingBox();
+                    if (box.getXsize() > boundingBoxLimit || box.getYsize() > boundingBoxLimit || box.getZsize() > boundingBoxLimit) {
+                        continue;
+                    }
+
+                    final int id = entity.getId();
+                    if (this.visibleUntil.get(id) > now) {
+                        continue; // recently proven visible - pinned to avoid track/untrack flicker
+                    }
+
+                    try {
+                        this.aabbMin.set(box.minX, box.minY, box.minZ);
+                        this.aabbMax.set(box.maxX, box.maxY, box.maxZ);
+                        if (this.culling.isAABBVisible(this.aabbMin, this.aabbMax, this.camera)) {
+                            this.visibleUntil.put(id, now + visibilityTimeoutMs);
+                        } else {
+                            if (newCulled == null) {
+                                newCulled = new IntOpenHashSet();
+                            }
+                            newCulled.add(id);
+                        }
+                    } catch (Throwable throwable) {
+                        ++traceFailures; // entity stays visible
+                        lastTraceFailure = throwable;
+                    }
+                }
             }
         }
+        // SkyHand end - Cheaper raytrace entity culling
 
         if (traceFailures > 0) {
             EntityCullingManager.LOGGER.debug("{} culling trace(s) failed for {} this pass (entities kept visible)", traceFailures, this.player.getScoreboardName(), lastTraceFailure);
@@ -214,6 +240,14 @@ public final class PlayerCullTracker implements Runnable {
         if (entity.isCurrentlyGlowing() || entity.isCustomNameVisible()) {
             return true; // rendered through walls on the client
         }
+        // SkyHand start - Cheaper raytrace entity culling
+        // Projectiles move too fast for a late re-track; a lightning bolt, an end crystal beam or a lead is drawn far
+        // outside the entity's box
+        if (entity instanceof Projectile || entity instanceof LightningBolt || entity instanceof EndCrystal
+            || entity instanceof LeashFenceKnotEntity || entity instanceof Leashable leashable && leashable.isLeashed()) {
+            return true;
+        }
+        // SkyHand end - Cheaper raytrace entity culling
         if (DivineConfig.NetworkCategory.raytraceCullingSkipMarkerArmorStands && entity instanceof ArmorStand && entity.isInvisible()) {
             return true;
         }

@@ -593,6 +593,7 @@ public class DivineConfig {
         public static boolean idleMinecartEnabled = true;
         public static int idleMinecartRecheckInterval = 20;
         public static boolean hiddenBlockUpdatesEnabled = true;
+        public static boolean stillVehicleSyncEnabled = true;
 
         // DAB settings
         public static boolean dabEnabled = false;
@@ -745,6 +746,11 @@ public class DivineConfig {
                 "When enabled, block changes that look the same on screen are not sent to players (tripwire powered or disarmed,",
                 "hopper enabled, dispenser and dropper triggered, note block powered, leaves distance, beehive honey below 5),",
                 "nor a cactus grown where it breaks on the next tick (cactus farms): players still get its break and item.");
+
+            stillVehicleSyncEnabled = getBoolean(ConfigCategory.PERFORMANCE.key("optimizations.still-vehicle-sync.enabled"), stillVehicleSyncEnabled,
+                "When enabled, a boat, minecart, shulker or happy ghast that has not moved since its last position packet is not sent",
+                "again every 3 ticks. It is still sent in full precision as soon as it moves, turns or lands, when a player starts",
+                "tracking it, and once a minute.");
         }
 
         private static void dab() {
@@ -969,6 +975,7 @@ public class DivineConfig {
         public static boolean sendSpectatorChangePacket = true;
         public static boolean playerProfileResultCachingEnabled = false;
         public static int playerProfileResultCachingTimeout = 1440;
+        public static int itemTrackingRange = -1;
 
         // No chat reports
         public static boolean noChatReportsEnabled = false;
@@ -1030,6 +1037,9 @@ public class DivineConfig {
                 "a proxy or login plugin. Default: false is recommended for online-mode servers.");
             playerProfileResultCachingTimeout = getInt(ConfigCategory.NETWORK.key("player-profile-result-caching.timeout"), playerProfileResultCachingTimeout,
                 "The amount of time in minutes to cache player profile results.");
+            itemTrackingRange = getInt(ConfigCategory.NETWORK.key("general.item-tracking-range"), itemTrackingRange,
+                "Distance in blocks up to which dropped items are sent to players. -1 keeps the misc range of spigot.yml,",
+                "shared with item frames, paintings and experience orbs. A client at 100 % entity distance draws items up to 16 blocks.");
         }
 
         private static void noChatReports() {
