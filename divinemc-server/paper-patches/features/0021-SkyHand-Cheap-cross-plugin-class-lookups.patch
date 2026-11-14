@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 14 Nov 2026 20:17:58 +0100
+Subject: [PATCH] SkyHand: Cheap cross-plugin class lookups
+
+
+diff --git a/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SimpleListPluginClassLoaderGroup.java b/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SimpleListPluginClassLoaderGroup.java
+index 23b6cb297f46c9c2b2944a3ab4031c31414620ad..b434b4dd26a10c18a9405942a6207134a27fc770 100644
+--- a/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SimpleListPluginClassLoaderGroup.java
++++ b/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SimpleListPluginClassLoaderGroup.java
+@@ -25,7 +25,8 @@ public abstract class SimpleListPluginClassLoaderGroup implements PluginClassLoa
+ 
+     @Override
+     public @Nullable Class<?> getClassByName(String name, boolean resolve, ConfiguredPluginClassLoader requester) {
+-        if (!DISABLE_CLASS_PRIORITIZATION) {
++        final String resource = name.replace('.', '/').concat(".class"); // SkyHand - Cheap cross-plugin class lookups
++        if (!DISABLE_CLASS_PRIORITIZATION && this.mayProvide(requester, resource)) { // SkyHand - Cheap cross-plugin class lookups
+             try {
+                 return this.lookupClass(name, false, requester); // First check the requester
+             } catch (ClassNotFoundException ignored) {
+@@ -33,6 +34,7 @@ public abstract class SimpleListPluginClassLoaderGroup implements PluginClassLoa
+         }
+ 
+         for (ConfiguredPluginClassLoader loader : this.classloaders) {
++            if (!this.mayProvide(loader, resource)) continue; // SkyHand - Cheap cross-plugin class lookups
+             try {
+                 return this.lookupClass(name, resolve, loader);
+             } catch (ClassNotFoundException ignored) {
+@@ -43,9 +45,33 @@ public abstract class SimpleListPluginClassLoaderGroup implements PluginClassLoa
+     }
+ 
+     protected Class<?> lookupClass(String name, boolean resolve, ConfiguredPluginClassLoader current) throws ClassNotFoundException {
+-        return current.loadClass(name, resolve, false, true);
++        return current.loadClass(name, resolve, false, this.checksLibraries(current)); // SkyHand - Cheap cross-plugin class lookups
+     }
+ 
++    // SkyHand start - Cheap cross-plugin class lookups
++    private static final boolean FULL_CLASS_LOOKUPS = Boolean.getBoolean("divinemc.skyhand.fullClassLookups");
++
++    /**
++     * Whether {@link #lookupClass} lets this loader answer with a class of its libraries.
++     */
++    protected boolean checksLibraries(ConfiguredPluginClassLoader current) {
++        return true;
++    }
++
++    /**
++     * Whether {@link #lookupClass} can find the class in this loader. Asked for another plugin, a loader only
++     * returns a class of its own jar (or of its libraries when they are shared): when neither holds the class
++     * file, the lookup would end in several ClassNotFoundExceptions (parent, jar, libraries) for nothing, and a
++     * miss walks every plugin. A class defined at runtime without a class file is not seen this way.
++     */
++    private boolean mayProvide(ConfiguredPluginClassLoader current, String resource) {
++        if (FULL_CLASS_LOOKUPS || !(current instanceof java.net.URLClassLoader loader)) {
++            return true;
++        }
++        return (this.checksLibraries(current) ? loader.getResource(resource) : loader.findResource(resource)) != null;
++    }
++    // SkyHand end - Cheap cross-plugin class lookups
++
+     @Override
+     public void remove(ConfiguredPluginClassLoader configuredPluginClassLoader) {
+         this.classloaders.remove(configuredPluginClassLoader);
+diff --git a/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SpigotPluginClassLoaderGroup.java b/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SpigotPluginClassLoaderGroup.java
+index 5a9f5b18e24a89dd642149a7a3d49390328b864b..59b397979ce525d2d0abefeb87cc0c447657465f 100644
+--- a/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SpigotPluginClassLoaderGroup.java
++++ b/src/main/java/io/papermc/paper/plugin/entrypoint/classloader/group/SpigotPluginClassLoaderGroup.java
+@@ -38,10 +38,12 @@ public class SpigotPluginClassLoaderGroup extends SimpleListPluginClassLoaderGro
+         return v -> false;
+     }
+ 
++    // SkyHand start - Cheap cross-plugin class lookups
+     @Override
+-    protected Class<?> lookupClass(String name, boolean resolve, ConfiguredPluginClassLoader current) throws ClassNotFoundException {
+-        return current.loadClass(name, resolve, false, this.libraryClassloaderPredicate.test(current));
++    protected boolean checksLibraries(ConfiguredPluginClassLoader current) {
++        return this.libraryClassloaderPredicate.test(current);
+     }
++    // SkyHand end - Cheap cross-plugin class lookups
+ 
+     // DEBUG
+     public PluginClassLoader getPluginClassLoader() {
