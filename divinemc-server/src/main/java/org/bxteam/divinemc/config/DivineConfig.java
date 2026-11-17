@@ -594,6 +594,7 @@ public class DivineConfig {
         public static int idleMinecartRecheckInterval = 20;
         public static boolean hiddenBlockUpdatesEnabled = true;
         public static boolean stillVehicleSyncEnabled = true;
+        public static boolean asyncPlayerDataWrites = true;
 
         // DAB settings
         public static boolean dabEnabled = false;
@@ -751,6 +752,11 @@ public class DivineConfig {
                 "When enabled, a boat, minecart, shulker or happy ghast that has not moved since its last position packet is not sent",
                 "again every 3 ticks. It is still sent in full precision as soon as it moves, turns or lands, when a player starts",
                 "tracking it, and once a minute.");
+
+            asyncPlayerDataWrites = getBoolean(ConfigCategory.PERFORMANCE.key("optimizations.async-player-data-writes.enabled"), asyncPlayerDataWrites,
+                "When enabled, player files (.dat, advancements, stats) are compressed and written to disk on a background thread.",
+                "The data itself is still taken on the main thread at the same moment. A read of a player file waits for its",
+                "pending write, and the server writes everything still queued before it stops.");
         }
 
         private static void dab() {
