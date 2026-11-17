@@ -819,6 +819,8 @@ public class DivineConfig {
         // Miscellaneous fixes
         public static boolean forceMinecraftCommand = false;
         public static boolean disableLeafDecay = false;
+        public static boolean trimCommandTrailingSpaces = true;
+        public static boolean unknownCommandSpigotMessage = true;
 
         // MC Bug fixes
         public static boolean fixMc258859 = false;
@@ -851,6 +853,12 @@ public class DivineConfig {
                 "Whether to force the use of vanilla commands over plugin commands.");
             disableLeafDecay = getBoolean(ConfigCategory.FIXES.key("misc.disable-leaf-decay"), disableLeafDecay,
                 "Disables leaf block decay.");
+            trimCommandTrailingSpaces = getBoolean(ConfigCategory.FIXES.key("misc.trim-command-trailing-spaces"), trimCommandTrailingSpaces,
+                "Removes the spaces at the end of a player command before it is parsed.",
+                "Brigadier reads them as the start of an argument that does not exist: '/list ' is refused with 'Incorrect argument for command' while '/list' works.");
+            unknownCommandSpigotMessage = getBoolean(ConfigCategory.FIXES.key("misc.unknown-command-spigot-message"), unknownCommandSpigotMessage,
+                "Answers a command refused at parsing (unknown command, incorrect argument) with messages.unknown-command of spigot.yml, as Spigot did,",
+                "instead of the vanilla message with its '<--[HERE]' context. An empty text in spigot.yml still sends nothing, and an UnknownCommandEvent listener can change the message.");
         }
 
         private static void bugFixes() {

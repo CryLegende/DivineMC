@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Tue, 17 Nov 2026 20:52:13 +0100
+Subject: [PATCH] SkyHand: Trim trailing spaces of a command, unknown command
+ message from spigot.yml
+
+
+diff --git a/net/minecraft/commands/Commands.java b/net/minecraft/commands/Commands.java
+index f5e41658d480e6d85e63e07aa5d69f0993ec2b7d..b7747139a1961e599df8adaea6d1749c7f7b0cc0 100644
+--- a/net/minecraft/commands/Commands.java
++++ b/net/minecraft/commands/Commands.java
+@@ -463,7 +463,14 @@ public class Commands {
+                     .append(net.kyori.adventure.text.Component.newline())
+                     .append(io.papermc.paper.adventure.PaperAdventure.asAdventure(context));
+             }
+-            org.bukkit.event.command.UnknownCommandEvent event = new org.bukkit.event.command.UnknownCommandEvent(sender, commandString, org.spigotmc.SpigotConfig.unknownCommandMessage.isEmpty() ? null : builder.build());
++            // SkyHand start - Unknown command message from spigot.yml
++            final net.kyori.adventure.text.Component unknownCommandMessage = org.spigotmc.SpigotConfig.unknownCommandMessage.isEmpty()
++                ? null
++                : org.bxteam.divinemc.config.DivineConfig.FixesCategory.unknownCommandSpigotMessage
++                    ? net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(org.spigotmc.SpigotConfig.unknownCommandMessage)
++                    : builder.build();
++            org.bukkit.event.command.UnknownCommandEvent event = new org.bukkit.event.command.UnknownCommandEvent(sender, commandString, unknownCommandMessage);
++            // SkyHand end - Unknown command message from spigot.yml
+             org.bukkit.Bukkit.getServer().getPluginManager().callEvent(event);
+             if (event.message() != null) {
+                 sender.sendFailure(io.papermc.paper.adventure.PaperAdventure.asVanilla(event.message()), false);
+diff --git a/net/minecraft/server/network/ServerGamePacketListenerImpl.java b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+index 4adf0976f6637f05f41ec0972068dd3216ccd436..1a07d520d2968d347fbbaa56cfe9dafb6b92bd76 100644
+--- a/net/minecraft/server/network/ServerGamePacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerGamePacketListenerImpl.java
+@@ -2534,6 +2534,11 @@ public class ServerGamePacketListenerImpl
+ 
+     // CraftBukkit start
+     private void performUnsignedChatCommand(String command) {
++        // SkyHand start - Trim trailing spaces of a command
++        if (org.bxteam.divinemc.config.DivineConfig.FixesCategory.trimCommandTrailingSpaces && !command.isBlank()) {
++            command = command.stripTrailing();
++        }
++        // SkyHand end - Trim trailing spaces of a command
+         String prefixedCommand = "/" + command;
+         if (org.spigotmc.SpigotConfig.logCommands) { // Paper - Add missing SpigotConfig logCommands check
+             LOGGER.info("{} issued server command: {}", this.player.getScoreboardName(), prefixedCommand);
+@@ -2576,7 +2581,10 @@ public class ServerGamePacketListenerImpl
+ 
+     private void performSignedChatCommand(final ServerboundChatCommandSignedPacket packet, final LastSeenMessages lastSeenMessages) {
+         // CraftBukkit start
+-        String commandString = "/" + packet.command();
++        // SkyHand start - Trim trailing spaces of a command
++        // The original packet.command() is still parsed below for the signatures; a trimmed command goes through the "command was changed" path
++        String commandString = "/" + (org.bxteam.divinemc.config.DivineConfig.FixesCategory.trimCommandTrailingSpaces && !packet.command().isBlank() ? packet.command().stripTrailing() : packet.command());
++        // SkyHand end - Trim trailing spaces of a command
+         if (org.spigotmc.SpigotConfig.logCommands) { // Paper - Add missing SpigotConfig logCommands check
+             LOGGER.info("{} issued server command: {}", this.player.getScoreboardName(), commandString);
+         } // Paper - Add missing SpigotConfig logCommands check
