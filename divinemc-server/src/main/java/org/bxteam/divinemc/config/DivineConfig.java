@@ -921,11 +921,31 @@ public class DivineConfig {
         public static boolean copperBulb1gt = false;
         public static boolean crafter1gt = false;
 
+        // SkyHand: action bar courtesy
+        public static boolean actionBarCourtesy = true;
+        public static int actionBarCourtesyHoldMs = 3000;
+        public static int actionBarCourtesyRepeatWindowMs = 4000;
+        public static boolean actionBarCourtesyDebug = false;
+
         public static void load() {
             secureSeed();
             lagCompensation();
             sentrySettings();
             oldFeatures();
+            actionBarCourtesy();
+        }
+
+        private static void actionBarCourtesy() {
+            actionBarCourtesy = getBoolean(ConfigCategory.MISC.key("action-bar-courtesy.enabled"), actionBarCourtesy,
+                "Keeps a one-off action bar message readable when a plugin refreshes its own bar in a loop (vanish, combat timer...).",
+                "A plugin refreshes a loop from its third message in a row, each less than repeat-window-ms after the previous one.",
+                "Any other message is shown and holds the bar for hold-ms: meanwhile, refreshes and empty messages from other plugins are dropped.");
+            actionBarCourtesyHoldMs = getInt(ConfigCategory.MISC.key("action-bar-courtesy.hold-ms"), actionBarCourtesyHoldMs,
+                "How long a message holds the bar. The client shows an action bar for 3 seconds (2 s, then a 1 s fade).");
+            actionBarCourtesyRepeatWindowMs = getInt(ConfigCategory.MISC.key("action-bar-courtesy.repeat-window-ms"), actionBarCourtesyRepeatWindowMs,
+                "Longest gap between two messages of the same plugin that still continues its loop.");
+            actionBarCourtesyDebug = getBoolean(ConfigCategory.MISC.key("action-bar-courtesy.debug"), actionBarCourtesyDebug,
+                "Logs every action bar with the plugin that sent it, and the ones dropped.");
         }
 
         private static void secureSeed() {

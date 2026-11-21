@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cry_Legende <vaval1003@gmail.com>
+Date: Sat, 21 Nov 2026 03:07:32 +0100
+Subject: [PATCH] SkyHand: Action bar courtesy
+
+
+diff --git a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+index 2236cc746a7085a4c3b48f17fcf5493e4db9631c..ca1883aff02d756a70beb0af16565b9847ef6f55 100644
+--- a/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
++++ b/net/minecraft/server/network/ServerCommonPacketListenerImpl.java
+@@ -63,6 +63,7 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+     public final java.util.Set<String> pluginMessagerChannels;
+     // Paper end - retain certain values
+     public final GameProfile profile; // DivineMC - Leaves Protocol Core
++    public final org.bxteam.divinemc.util.ActionBarCourtesy.State skyhand$actionBar = new org.bxteam.divinemc.util.ActionBarCourtesy.State(); // DivineMC - SkyHand: action bar courtesy
+ 
+     public ServerCommonPacketListenerImpl(final MinecraftServer server, final Connection connection, final CommonListenerCookie cookie) {
+         this.server = server;
+@@ -419,6 +420,14 @@ public abstract class ServerCommonPacketListenerImpl implements ServerCommonPack
+             serverGamePacketListener.player.compassTarget = org.bukkit.craftbukkit.util.CraftLocation.toBukkit(defaultSpawnPositionPacket.respawnData().pos(), serverGamePacketListener.getPlayer().level());
+         }
+         // CraftBukkit end
++        // DivineMC start - SkyHand: action bar courtesy
++        if (org.bxteam.divinemc.config.DivineConfig.MiscCategory.actionBarCourtesy
++            && org.bxteam.divinemc.util.ActionBarCourtesy.isActionBar(packet)
++            && this instanceof ServerGamePacketListenerImpl gameListener
++            && !org.bxteam.divinemc.util.ActionBarCourtesy.allow(this.skyhand$actionBar, packet, gameListener.player.getScoreboardName())) {
++            return;
++        }
++        // DivineMC end - SkyHand: action bar courtesy
+         if (packet.isTerminal()) {
+             this.close();
+         }
